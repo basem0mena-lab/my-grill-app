@@ -13,6 +13,12 @@ try:
 except ImportError:
     FOLIUM_AVAILABLE = False
 
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+
 # 1. Page Config
 st.set_page_config(
     page_title='دليل مطاعم المشويات - تحديد الموقع',
@@ -141,8 +147,66 @@ PRESET_RESTAURANTS = [
 ]
 
 
-if 'restaurants_db' not in st.session_state:
-    st.session_state['restaurants_db'] = PRESET_RESTAURANTS.copy()
+CITY_TO_GOVERNORATE = {
+    'دمنهور': 'البحيرة',
+    'رشيد': 'البحيرة',
+    'كفر الدوار': 'البحيرة',
+    'أبو المطامير': 'البحيرة',
+    'كوم حمادة': 'البحيرة',
+    'مدينة بدر': 'البحيرة',
+    'الإسكندرية': 'الإسكندرية',
+    'القاهرة': 'القاهرة'
+}
+
+# --- الربط المباشر بـ Supabase ورفع البيانات تلقائياً ---
+if SUPABASE_AVAILABLE and "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
+    try:
+        supabase_url = st.secrets["SUPABASE_URL"]
+        supabase_key = st.secrets["SUPABASE_KEY"]
+        supabase = create_client(supabase_url, supabase_key)
+
+        # 1. التحقق إن كان جدول المطاعم فارغاً
+        response = supabase.table("restaurants").select("id").execute()
+        if len(response.data) == 0:
+            for item in PRESET_RESTAURANTS:
+                supabase.table("restaurants").insert({
+                    "city": item["المدينة"],
+                    "governorate": CITY_TO_GOVERNORATE.get(item["المدينة"], "البحيرة"),
+                    "name": item["اسم المطعم"],
+                    "address": item["العنوان"],
+                    "phone": item["رقم التليفون"],
+                    "whatsapp": item["الواتساب"],
+                    "facebook": item["الفيسبوك"],
+                    "cuisine_type": item["النوع"],
+                    "lat": item["lat"],
+                    "lon": item["lon"]
+                }).execute()
+            st.sidebar.success("✅ تم رفع البيانات المبدئية إلى Supabase بنجاح!")
+
+        # 2. قراءة البيانات من Supabase مباشرة لاستخدامها في التطبيق
+        db_response = supabase.table("restaurants").select("*").execute()
+        if db_response.data:
+            loaded_restaurants = []
+            for r in db_response.data:
+                loaded_restaurants.append({
+                    'المدينة': r.get('city', ''),
+                    'اسم المطعم': r.get('name', ''),
+                    'العنوان': r.get('address', ''),
+                    'رقم التليفون': r.get('phone', ''),
+                    'الواتساب': r.get('whatsapp', ''),
+                    'الفيسبوك': r.get('facebook', ''),
+                    'النوع': r.get('cuisine_type', ''),
+                    'lat': r.get('lat', 0.0),
+                    'lon': r.get('lon', 0.0)
+                })
+            st.session_state['restaurants_db'] = loaded_restaurants
+    except Exception as e:
+        st.sidebar.warning(f"تعذر الاتصال بـ Supabase: {e}")
+        if 'restaurants_db' not in st.session_state:
+            st.session_state['restaurants_db'] = PRESET_RESTAURANTS.copy()
+else:
+    if 'restaurants_db' not in st.session_state:
+        st.session_state['restaurants_db'] = PRESET_RESTAURANTS.copy()
 
 
 st.title('🥩 استكشاف وتحديد المطاعم حول أي موقع على الخريطة')
@@ -166,18 +230,6 @@ PRESET_LOCATIONS = {
     'الإسكندرية': (31.2001, 29.9187),
     'القاهرة': (30.0444, 31.2357),
     'تحديد إحداثيات موقع خاص': None
-}
-
-
-CITY_TO_GOVERNORATE = {
-    'دمنهور': 'البحيرة',
-    'رشيد': 'البحيرة',
-    'كفر الدوار': 'البحيرة',
-    'أبو المطامير': 'البحيرة',
-    'كوم حمادة': 'البحيرة',
-    'مدينة بدر': 'القاهرة',
-    'الإسكندرية': 'الإسكندرية',
-    'القاهرة': 'القاهرة'
 }
 
 
@@ -356,8 +408,6 @@ elif not in_range_df.empty:
         tiles='OpenStreetMap'
     )
 
-
-    # مركز البحث ونطاقه التقريبي
     folium.Marker(
         [center_lat, center_lon],
         tooltip='📍 الموقع المحدد',
@@ -372,7 +422,6 @@ elif not in_range_df.empty:
         )
     ).add_to(interactive_map)
 
-
     folium.Circle(
         [center_lat, center_lon],
         radius=max_distance_km * 1000,
@@ -382,7 +431,6 @@ elif not in_range_df.empty:
         fill_opacity=0.08,
         tooltip=f'نطاق البحث: {max_distance_km} كم'
     ).add_to(interactive_map)
-
 
     for _, row in in_range_df.iterrows():
         popup_html = f'''
@@ -418,7 +466,6 @@ elif not in_range_df.empty:
                 prefix='fa'
             )
         ).add_to(interactive_map)
-
 
     st_folium(
         interactive_map,
@@ -526,4 +573,5 @@ st.download_button(
         'application/vnd.openxmlformats-officedocument'
         '.spreadsheetml.sheet'
     )
-)
+                    )
+
